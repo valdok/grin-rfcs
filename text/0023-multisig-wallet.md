@@ -16,7 +16,7 @@ The idea is to allow a wallet to be co-owned by several users, whereas a quorum 
 
 The core idea is based on Shamir's secret sharing (SSS) scheme, which allows the reconstruction of a secret by a quorum of M/N. And due to the homomorphic nature of ECC, the secret will not be reconstructed in a plain way. It will only be used to compute the shared pubkey, and to calculate the signatures required to build transactions (such as Schnorr's signature, and UTXO rangeproof)
 
-Normal wallet has a master secret (usually derived from the seed phrase), which is then used to derive various keys, including the blinding factors for coins (like BIP44).
+Normal wallet has a master secret (usually derived from the seed phrase), which is then used to derive various keys, including the blinding factors for coins (like \vf).
 
 The multisig wallet requires 2 changes:
 
@@ -109,11 +109,62 @@ $$
 sk_{new} = \sum_{i} sk_{share_i}
 $$
 
-Finally it verifies the correctness of its secret key, by checking if its appropriate pubkey sits on the same SSS polynome.
+Note that during this summation, all the $\delta(i,j)$ terms are cancelled-out. They are needed to blind each actor's secret key, but don't affect the sum of all the shares.
+
+Finally the new actor verifies the correctness of its secret key, by checking if its appropriate pubkey sits on the same SSS polynome.
 
 $$
-G \cdot sk_{new} = P_{x_{new}}
+G \cdot sk_{new} = P_{x_{new}} = P(x_{new})
 $$
+
 
 ### Building a transaction
+
+MW transaction consists of inputs, outputs at least one kernel. In order to build a valid transaction, a subset of M/N actors are selected. Each actor gets the transaction parameters:
+- list of input coins (coin number + value)
+- list of output coins (coin number + value)
+- any additional metadata (current blockchain height, fee, the identity of the tx peer, memo, etc.)
+
+Each actor receives and realizes the tx parameters. In particular, the tx balance (outputs minus inputs) is calculated. And then it decides if it wishes to take a part. Then the selected actors perform an MPC to build the transaction.
+
+Inputs are represented by Pedersen commitments (or, alternatively, Switch commitments). Since they are EC points, the knowledge of $sk_{cf}$ is not necessary, they can be calculated by each actor from $P_{cf}$ alone.
+
+$$
+C(number, value) = BIP44(CoinPath(number, value)) \cdot P_{cf} + H \cdot value
+$$
+
+Now we'll define how output TXOs and the transaction kernel are created and signed
+
+#### UTXO
+
+The UTXO is represented by its commitment and the Rangeproof (a.k.a. bulletproof). The commitment is computed exactly as for inputs, by each actor individually. So, only the rangeproof requires MPC.
+
+During the rangeproof creation, various pseudo-random EC scalars are generated. There're 2 sources of the randomness:
+1. Randomness to obscure the UTXO value, also used to "color" it, make it possible to recognize by the owner, and recover the parameters (coin number and the value).
+2. Randomness to protect the UTXO blinding factor.
+
+In standard wallet (not multisig) it's possible to use a single source of randomness for both purposes. It also means that UTXO recognition is in fact its full reverse-engineering.
+
+In multisigned wallet it's essential to use 2 distinct sources of randomness. The (1) is derived from the $P_{cf}$ (which is known to all the actors) and the UTXO commitment. The (2) is derived by each actor individually to obscure its key share.
+Moreover, since we're tralking about multisig, each actor will rely on non-deterministic random.
+
+The rangeproof protocol between (P)rover and (V)erifier is defined like this:
+- P: Commitment, A, S (commitments)
+- V: y, z (challenges)
+- P: T1, T2 (commitments)
+- V: x (challenges)
+- P: $Tau_X$ (scalar)
+- (continued)
+
+The $Tau_X$ is a linear combination of the UTXO blinding factor, and 2 nonces, whereas EC points T1 and T2 are commitments to those nonces. So, the modified algorithm to create the rangeproof looks like this:
+
+- Each actor proceeds according to the scheme, up to where T1,T2 should be revealed.
+- Each actor generates 2 nonces, using true random (i.e. non-deterministic), uses them to calculate its share of T1,T2, and reveals its shares.
+- Once M actors reveal their shares, they're aggregated to compute the final T1,T2.
+- Each validator derives the next nonce, and uses it to compute and reveal its share of $Tau_X$
+- Once M actors reveal their shares, they're aggregated to compute the  $Tau_X$
+- All the consequent steps are performed individually by each actor (no more MPC is required)
+
+
+#### Transaction Kernel
 
