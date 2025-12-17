@@ -245,7 +245,7 @@ Coins with different numbers (i.e. IDs) will have different blinding factors. Bu
 Normally actors should not take part in UTXO creation with coin number that was already used. But the situation may be confusing because of the blockchain state volatility. There can be potential reorgs, whereas transactions may be reverted, and then, after some time, included again in a block.
 By such it's theoretically possible the wallet will own several coins with the same ID, but different values. If the same blinding factor is used in all of them, then it's trivial to replace them in an already-built transaction.
 
-**Mitigation:** include the coin value in the blidning factor derivation too. That is, if the BIP44 is used, both the coin number and its value must be included in the derivation path.
+**Mitigation:** include the coin value in the blidning factor derivation too.
 
 ### Wagner attack, Prouhet-Tarry-Escott (PTE) problem
 
