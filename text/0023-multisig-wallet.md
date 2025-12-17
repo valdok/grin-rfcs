@@ -30,6 +30,7 @@ More about this later, but in principle this should guarantee that each collecti
 Here we'll define key terms and concept
  - **Secret key** - EC (elliptic curve) scalar
  - **Pubkey** - EC point (group element).
+ - We'll use the additive notation for the ECC operations (i.e. adding points, and multiplying points by scalars)
  - **Actor** - a user that co-owns a wallet.
  - **Moniker** - a unique user name/alias, that the actor chooses for identification (such as `Alice`, `Bob`, and etc.)
 
@@ -224,5 +225,32 @@ And as long as the main principle holds: each nonce is used to only answer one c
 The only situation where such an attack is possible is during the wallet initialization by the quorum of M inital actors. If not mitigated, an actor can essentially cancel the keys of other actors, and gain an exclusive access.
 As we mentioned, this is mitigated by the fact that all messages sent by the actors are supposed to be signed by them.
 
-### Wagner attack
+### Coin key generation, and Wagner attack
+
+The main potential weakness of the described scheme is that, after the agreed transaction is built and signed by the actors, a malicious actor can try to replace transaction inputs (or outputs) by the other ones, containing a lower value. Then, the value excess can be compensated by attacker's UTXO added to the transaction.
+
+Suppose a multisig wallet owns two coins, with values $V1 < V2$. There's a decision to spend the coin with value $V1$ in a transaction. It's collectively built and signed, but then a malicious actor changes the input to $V2$, and appends its UTXO that absorbs the value $V2-V1$.
+
+Actions such as replacing coins are generally not possible, because different coins have different blinding factors, and it's not feasible to build a valid transaction when the blinding factor balance isn't compensated. But what if yjr attacker can manipulate inputs and outputs such that the **resulting blinding factor balance is unchanged**?
+
+This is a real threat, and we'll describe why it's possible, and how to mitigate possible attacks.
+
+#### 1. Why the coin value should be used together with the coin number in its key derivation
+Coins with different numbers (i.e. IDs) will have different blinding factors. But what if a wallet owns several coins with different values but the same number?
+Normally actors should not take part in UTXO creation with coin number that was already used. But the situation may be confusing because of the blockchain state volatility. There can be potential reorgs, whereas transactions may be reverted, and then, after some time, included again in a block.
+By such it's theoretically possible the wallet will own several coins with the same ID, but different values. If the same blinding factor is used in all of them, then it's trivial to replace them in an already-built transaction.
+
+**Mitigation:** include the coin value in the blidning factor derivation too. That is, if the BIP44 is used, both the coin number and its value must be included in the derivation path.
+
+#### Wagner attack
+
+Due to the nature of MW, a transaction may contain multiple inputs and outputs. And it's generally feasible to find different sets of inputs/outputs, such that the excess of blinding factors will be the same:
+
+$$
+\sum_{i}^{inputs_1} Key(number_i, value_i) - \sum_{j}^{outputs_1} Key(number_j, value_j) = \sum_{i}^{inputs_2} Key(number_i, value_i) - \sum_{j}^{outputs_2} Key(number_j, value_j)
+$$
+
+If the sets of inputs/outputs are large enough, then this may be a feasible task.
+
+Now, we know that the coins keys are not known to the attacker because on actor fully has the co-factor $sk_{cf}$. But, turns out, this is not important here. The co-factor is constant for all the coins. And if the attacker can find such sets with equal blinding factor excess before they're multiplied by the co-factor - the equivalence will hold after the co-factor is applied as well.
 
