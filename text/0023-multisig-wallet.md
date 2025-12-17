@@ -279,4 +279,14 @@ However, since real-world M doesn't have to be large, additional steps can be ta
 
 ### Why it's beneficial to include the commonly-known HKDF-based key complement
 
-Theoretically even withouth the HKDF-based key the described scheme should be secure, and the coin blinding factors should never be revealed. However, if a coin blinding factor is leaked (for whatever reason) - it may compromise all the secret keys.
+Theoretically coin blinding factors should never be revealed. However, if a coin blinding factor is leaked (for whatever reason), withouth the HKDF-based blinding factor it may compromise all the secret keys.
+
+Without the HKDF part, the coin blinding factor is:
+
+$$
+sk(x) = \sum_{n=0}^{M-1} s_n \cdot x^n
+$$
+
+whereas $s_n$ are the unknown coefficient. If the coin blinding factor and its number is leaked, then this gives an equation. If M different blinding factors are leaked - then there're M linear equations for $s_n$ coefficients, that can easily be solved.
+
+So, keeping this in mind, it's beneficial to add additional "shared" blinding factor to each key.
