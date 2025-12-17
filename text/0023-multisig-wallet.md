@@ -279,7 +279,7 @@ However, since real-world M doesn't have to be large, additional steps can be ta
 
 ### Why it's beneficial to include the commonly-known HKDF-based key complement
 
-Theoretically coin blinding factors should never be revealed. However, if a coin blinding factor is leaked (for whatever reason), withouth the HKDF-based blinding factor it may compromise all the secret keys.
+Theoretically coin blinding factors should never be revealed. However, if a coin blinding factor is leaked (for whatever reason), without the HKDF-based blinding factor it may compromise all the secret keys.
 
 Without the HKDF part, the coin blinding factor is:
 
