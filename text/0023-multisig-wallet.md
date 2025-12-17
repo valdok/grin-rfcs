@@ -16,9 +16,9 @@ The idea is to allow a wallet to be co-owned by several users, whereas a quorum 
 
 The core idea is based on Shamir's secret sharing (SSS) scheme, which allows the reconstruction of a secret by a quorum of M/N. And due to the homomorphic nature of ECC, the secret keys will not be calculated in a plain way. It will only be used to compute the public keys, and to calculate the signatures in an MPC ritual required to build transactions (such as Schnorr's signature, and UTXO rangeproof)
 
-Normal wallet has a master secret (usually derived from the seed phrase), which is then used to derive various keys, including the blinding factors for coins (BIP44).
+Normal wallet has a master secret (usually derived from the seed phrase), which is then used to derive various keys, including the blinding factors for coins (such as BIP44).
 
-Multisig wallet will instead rely on SSS to generate the keys. The BIP44 can still be used as an addition, to increase the security of the wallet (more about this later).
+Multisig wallet will instead rely on SSS to generate the keys. The BIP44 can still be used in addition, to increase the security of the wallet (more about this later).
 
 
 ### Key concepts
@@ -36,7 +36,7 @@ Here we'll define key terms and concept
  is signed by its private key, and then verified by others vs its pubkey
 
 **Scalar derivation**
-We'll need a collision-resistant function to generate a scalar from arbitrary arguments. Basically it's implemented via a hash function (such as SHA-256). However additional steps are required to make sure the result is a valid EC scalar (clamping).
+We'll need a collision-resistant function to generate a scalar from arbitrary public arguments. Basically it's implemented via a hash function (such as SHA-256). However additional steps are required to make sure the result is a valid EC scalar (clamping).
 We'll call this function $Hash_s(msg)$
 
 **Moniker -> scalar function**
@@ -74,7 +74,7 @@ $$
 P(x) = \sum_{i=1}^{M} P_i \cdot \prod_{j \neq i} \frac{x - x_j}{x_i - x_j} = \sum_{n=0}^{M-1}S_n \cdot x^n
 $$
 
-Upon ritual completion, the public polynome coefficients $S_n$ become known to all the actors. The set { $\{ S_n \}$ } defines the wallet account.
+Upon ritual completion, the public polynome coefficients { $S_n$ } become known to all the actors.
 
 Finally each actor initalizes its multisig wallet. The coefficients { $\{ S_n \}$ } are saved, in addition to its secret key and the moniker.
 
@@ -132,19 +132,17 @@ MW transaction consists of inputs, outputs at least one kernel. In order to buil
 - list of output coins (coin number + value)
 - any additional metadata (current blockchain height, fee, the identity of the tx peer, memo, etc.)
 
-Each actor receives and realizes the tx parameters. In particular, the tx balance (outputs minus inputs) is calculated. And then it decides if it wishes to take a part. Then the selected actors perform an MPC to build the transaction.
+Each actor receives and realizes the tx parameters. In particular, the tx balance (outputs minus inputs, the net value received/sent) is calculated. And then it decides if it wishes to take a part. Then the selected actors perform an MPC to build the transaction.
 
 ### Inputs
 
 Inputs are represented by Pedersen commitments (or, alternatively, Switch commitments). Since they are EC points, they can be calculated by each actor:
 
 $$
-C(number, value) = P(x_{coin}(number, value)) + H \cdot value
+C(coin) = P(x_{coin}) + G \cdot HKDF(S_0, x_{coin}) + H \cdot value
 $$
 
-Now we'll define how output TXOs and the transaction kernel are created and signed
-
-#### UTXO
+#### Outputs
 
 The UTXO is represented by its commitment and the Rangeproof (a.k.a. bulletproof). The commitment is computed exactly as for inputs, by each actor individually. So, only the rangeproof requires MPC.
 
@@ -154,14 +152,14 @@ During the rangeproof creation, various pseudo-random EC scalars are generated. 
 
 In standard wallet (not multisig) it's possible to use a single source of randomness for both purposes. It also means that UTXO recognition is in fact its full reverse-engineering.
 
-In multisigned wallet it's essential to use 2 distinct sources of randomness. The (1) is derived from the $P_{cf}$ (which is known to all the actors) and the UTXO commitment. The (2) is derived by each actor individually to obscure its key share.
-Moreover, since we're tralking about multisig, each actor will rely on non-deterministic random.
+In multisigned wallet it's essential to use 2 distinct sources of randomness. The (1) is derived from the $S_0$ (which is known to all the actors) and the UTXO commitment. The (2) is derived by each actor individually to obscure its key share.
+Since it's a multisig, each actor will rely on non-deterministic nonces (random).
 
 The rangeproof protocol between (P)rover and (V)erifier is defined like this:
 - P: Commitment, A, S (commitments)
 - V: y, z (challenges)
 - P: T1, T2 (commitments)
-- V: x (challenges)
+- V: x (challenge)
 - P: $Tau_X$ (scalar)
 - (continued)
 
@@ -170,7 +168,7 @@ The $Tau_X$ is a linear combination of the UTXO blinding factor, and 2 nonces, w
 - Each actor proceeds according to the scheme, up to where T1,T2 should be revealed.
 - Each actor generates 2 nonces, using true random (i.e. non-deterministic), uses them to calculate its share of T1,T2, and reveals its shares.
 - Once M actors reveal their shares, they're aggregated to compute the final T1,T2.
-- Each actor derives the next nonce, and uses it to compute and reveal its share of $Tau_X$
+- Each actor derives the next challenge, and uses it to compute and reveal its share of $Tau_X$
 - Once M actors reveal their shares, they're aggregated to compute the  $Tau_X$
   - Note: it's possible to verify the correctness of each partial contribution to $Tau_X$
 - All the consequent steps are performed individually by each actor (no more MPC is required)
@@ -185,9 +183,10 @@ Here we'll generalize this to the case where either side of the transaction (eit
 The difference of the inputs-outputs blinding factors contributes to the transaction excess, and should be compensated by the transaction kernel. Each actor calculates its share of this excess,
 this is its share of the secret key that's used to sign the kernel.
 
-An important addition to the classical MW is the so-called transaction **offset**. The total transaction blinding factor excess is split into 2 parts. One is compensated by the transaction kernel, and the other part is revealed in a plain form (EC scalar). This makes it infeasible for the attacker to reverse engineer the coinjoined transactions. To support this, each actor splits its key share into 2 parts as well. 
+An important addition to the classical MW is the so-called transaction **offset**. The total transaction blinding factor excess is split into 2 parts. One is compensated by the transaction kernel, and the other part is revealed in a plain form (EC scalar). This makes it infeasible for the attacker to reverse engineer the coinjoined transactions. To support this, the offset is generated in a deterministic way: $offset = HKDF(S_0, context)$ whereas $context$ accounts for all the transaction parameters: list of coins, metadata, selected quorum, etc.
+Then it's accounted in the kernel commitment, and in the signature (during the aggregation stage).
 
-Then the principle is similar to that of UTXO. During the first round each actor creates a non-deterministic nonce, reveals its image, the image of its share to the kernel excess, and the offset. Then, once all the nonces and kernel commitment shares are known and aggregated (from both sides of the transaction), the kernel is fully built. During the second round, each actor derives the signature challenge, and reveals its share of the blinded secret key.
+Then the principle is similar to that of UTXO. During the first round each actor creates a non-deterministic nonce, and reveals its image. Then, once all the nonces and kernel commitment shares are known and aggregated (from both sides of the transaction), the kernel is fully built. During the second round, each actor derives the signature challenge, and reveals its share of the blinded secret key.
 
 #### E2E flow
 
@@ -197,16 +196,16 @@ Here we'll consider an example where Alice sends funds to Bob, both are in fact 
   - A quorum of $M_A$ actors that co-own the Alice wallet decides to send funds to Bob. A list of input coins is selected, fee is decided, the coin number for the exchange coin is choosen.
   - The information is distributed among the actors.
   - They generate appropriate nonces (2 for output UTXO, one for tx kernel)
-  - Round 1: they reveal the images: T1,T2 for the UTXO, kernel Commitment and the noce image.
-  - The semi-build kernel is sent to the Bob, among with the general transaction info
+  - Round 1: they reveal the images: T1,T2 for the UTXO, and the kernel nonce image.
+  - The semi-built kernel is sent to the Bob, among with the general transaction info
 - Bob side
   - A quorum of $M_B$ Bob's actors decides to accept the funds. They choose the coin number for the output UTXO
   - Each actor generates the appropriate nonces (2 for output UTXO, and 1 for kernel).
-  - Round 1: they reveal the images: T1,T2 for the UTXO, kernel Commitment and the noce image.
-  - Round 2: each actor receives the aggregates for the UTXO and the kernel. And reveals its partial signatures, and its share to the offset
-  - The aggregated kernel with the signed Bob's UTXO is sent to Alice
+  - Round 1: they reveal the images: T1,T2 for the UTXO, and the kernel noce image.
+  - Round 2: each actor receives the aggregates for the UTXO and the kernel. And reveals its partial signatures
+  - The aggregated kernel, offset and Bob's UTXO is sent to Alice
 - Alice side
-  - Round 2: each actor receives the aggregates for the UTXO and the kernel. And reveals its partial signatures, and its share to the offset
+  - Round 2: each actor receives the aggregates for the UTXO and the kernel. And reveals its partial signatures
 - The transaction is aggregated, and can be sent to the network
 
 As can be seen from the above, the roles of Bob and Alice actors are symmetric. Both participate in 2 rounds of MPC.
@@ -217,9 +216,9 @@ As can be seen from the above, the roles of Bob and Alice actors are symmetric. 
 
 During the new actor addition, each current actor reveals its secret key in a plain form to the new actor. It's multiplied by the SSS coefficient, but this coefficient is widely known. So without the addition of $\delta(i,j)$ terms each actor secret key would be trivial to compute.
 
-This is why $\delta(i,j)$ terms are essential, they perform the perfect blinding of the actor secret key. Moreover, even if several current actors collude with the new actor, still its key is perfectly blinded as long as there is at least a single honest actor that doesn't disclose its $\delta(i,j)$ term.
+This is why $\delta(i,j)$ terms are essential, they perform the perfect hiding of the actor secret key. Moreover, even if several current actors collude with the new actor, still its key is perfectly hidden as long as there is at least a single honest actor that doesn't disclose its $\delta(i,j)$ term.
 
-The only situation where the actor key can be compromised is wherer all M-1 other actors collude with the new one. But this essentially means that they togetther form a quorum of M malicious actors. And obviously a quorum of M actors can calculate and compromise any key.
+The only situation where the actor key can be compromised is where all M-1 other actors collude with the new one. But this essentially means that they together form a quorum of M malicious actors. And obviously a quorum of M actors can calculate and compromise any key.
 
 ### UTXO and kernel signing, why rely on non-deterministic random
 
@@ -233,32 +232,51 @@ And as long as the main principle holds: each nonce is used to only answer one c
 The only situation where such an attack is possible is during the wallet initialization by the quorum of M inital actors. If not mitigated, an actor can essentially cancel the keys of other actors, and gain an exclusive access.
 As we mentioned, this is mitigated by the fact that all messages sent by the actors are supposed to be signed by them.
 
-### Coin key generation, and Wagner attack
+### Why the coin value should be used together with the coin number in its key derivation
 
-The main potential weakness of the described scheme is that, after the agreed transaction is built and signed by the actors, a malicious actor can try to replace transaction inputs (or outputs) by the other ones, containing a lower value. Then, the value excess can be compensated by attacker's UTXO added to the transaction.
+After the agreed transaction is built and signed by the actors, a malicious actor can try to replace transaction inputs (or outputs) by the other ones, containing a lower value. Then, the value excess can be compensated by attacker's UTXO added to the transaction.
 
 Suppose a multisig wallet owns two coins, with values $V1 < V2$. There's a decision to spend the coin with value $V1$ in a transaction. It's collectively built and signed, but then a malicious actor changes the input to $V2$, and appends its UTXO that absorbs the value $V2-V1$.
 
-Actions such as replacing coins are generally not possible, because different coins have different blinding factors, and it's not feasible to build a valid transaction when the blinding factor balance isn't compensated. But what if yjr attacker can manipulate inputs and outputs such that the **resulting blinding factor balance is unchanged**?
+Actions such as replacing coins are generally not possible, because different coins have different blinding factors, and it's not feasible to build a valid transaction when the blinding factor balance isn't compensated. But what if rgw attacker can manipulate inputs and outputs such that the **resulting blinding factor balance is unchanged**?
 
-This is a real threat, and we'll describe why it's possible, and how to mitigate possible attacks.
 
-#### 1. Why the coin value should be used together with the coin number in its key derivation
 Coins with different numbers (i.e. IDs) will have different blinding factors. But what if a wallet owns several coins with different values but the same number?
 Normally actors should not take part in UTXO creation with coin number that was already used. But the situation may be confusing because of the blockchain state volatility. There can be potential reorgs, whereas transactions may be reverted, and then, after some time, included again in a block.
 By such it's theoretically possible the wallet will own several coins with the same ID, but different values. If the same blinding factor is used in all of them, then it's trivial to replace them in an already-built transaction.
 
 **Mitigation:** include the coin value in the blidning factor derivation too. That is, if the BIP44 is used, both the coin number and its value must be included in the derivation path.
 
-#### Wagner attack
+### Wagner attack, Prouhet-Tarry-Escott (PTE) problem
 
-Due to the nature of MW, a transaction may contain multiple inputs and outputs. And it's generally feasible to find different sets of inputs/outputs, such that the excess of blinding factors will be the same:
+Due to the nature of MW, a transaction may contain multiple inputs and outputs. And the attacker can try to find different sets of inputs/outputs, such that the excess of blinding factors will be the same:
 
 $$
-\sum_{i}^{inputs_1} Key(number_i, value_i) - \sum_{j}^{outputs_1} Key(number_j, value_j) = \sum_{i}^{inputs_2} Key(number_i, value_i) - \sum_{j}^{outputs_2} Key(number_j, value_j)
+\sum_{i}^{inputs_1} Key(coin_i) - \sum_{j}^{outputs_1} Key(coin_j) = \sum_{i}^{inputs_2} Key(coin_i) - \sum_{j}^{outputs_2} Key(coin_j)
 $$
 
-If the sets of inputs/outputs are large enough, then this may be a feasible task.
+Note that if the attacker could derive blinding factors for arbitrary coin parameters, then it'd be a feasible task for a large enough set. This is known as the Generalized Birthday problem, or Wagner attack.
 
-Now, we know that the coins keys are not known to the attacker because on actor fully has the co-factor $sk_{cf}$. But, turns out, this is not important here. The co-factor is constant for all the coins. And if the attacker can find such sets with equal blinding factor excess before they're multiplied by the co-factor - the equivalence will hold after the co-factor is applied as well.
+However, in our particular case, coin blinding factors are derived from the SSS polynome, whose coefficients are secret.
 
+So, the only way for the attacker to find such sets is to try to find the sets where different powers of $x^n$ are equal for different sets. That is:
+
+$$
+\sum_{i}^{inputs_1} x^n(coin_i) - \sum_{j}^{outputs_1} x^n(coin_j) = \sum_{i}^{inputs_2} x^n(coin_i) - \sum_{j}^{outputs_2} x^n(coin_j)
+$$
+
+$$\forall\, n \in \{0, \dots, M-1\}$$
+
+
+(This is like trying to solve M-1 generalized birthday problems simultaneously).
+
+It's a known problem, called Prouhet-Tarry-Escott (PTE) problem. And it's considered generally infeasible to solve, especially for large M
+
+However, since real-world M doesn't have to be large, additional steps can be taken by the actors to prevent the possibility of such attacks (though not sure if they're really needed). Those include the following:
+- Ensure the being-spent coins actually exist and unspent (i.e. don't build transaction for non-existing inputs)
+- Stick to consequent coin number allocation. Each new coin number should not be completely random.
+- Don't create excessive number of outputs in a transaction. Normal transaction creates only a single output (per each side).
+
+### Why it's beneficial to include the commonly-known HKDF-based key complement
+
+Theoretically even withouth the HKDF-based key the described scheme should be secure, and the coin blinding factors should never be revealed. However, if a coin blinding factor is leaked (for whatever reason) - it may compromise all the secret keys.
