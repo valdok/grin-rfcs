@@ -14,15 +14,11 @@ The idea is to allow a wallet to be co-owned by several users, whereas a quorum 
 
 ## Reference-level explanation
 
-The core idea is based on Shamir's secret sharing (SSS) scheme, which allows the reconstruction of a secret by a quorum of M/N. And due to the homomorphic nature of ECC, the secret will not be reconstructed in a plain way. It will only be used to compute the shared pubkey, and to calculate the signatures required to build transactions (such as Schnorr's signature, and UTXO rangeproof)
+The core idea is based on Shamir's secret sharing (SSS) scheme, which allows the reconstruction of a secret by a quorum of M/N. And due to the homomorphic nature of ECC, the secret keys will not be calculated in a plain way. It will only be used to compute the public keys, and to calculate the signatures in an MPC ritual required to build transactions (such as Schnorr's signature, and UTXO rangeproof)
 
-Normal wallet has a master secret (usually derived from the seed phrase), which is then used to derive various keys, including the blinding factors for coins (like \vf).
+Normal wallet has a master secret (usually derived from the seed phrase), which is then used to derive various keys, including the blinding factors for coins (BIP44).
 
-The multisig wallet requires 2 changes:
-
-1. It will have 2 keys. One will be used in a deterministic key derivation (like HKDF / BIP44). The other, called a **co-factor**, will be constant, and act as a multiplier. It will be split among N co-owners via SSS scheme.
-2. Key derivation can proceed accoring to BIP44, but the key path must include the coin value, not just the coin number.
-More about this later, but in principle this should guarantee that each collectively built transaction spends and produces coins exactly as agreed, without amount being replaced/tampered.
+Multisig wallet will instead rely on SSS to generate the keys. The BIP44 can still be used as an addition, to increase the security of the wallet (more about this later).
 
 
 ### Key concepts
@@ -40,11 +36,11 @@ Here we'll define key terms and concept
  is signed by its private key, and then verified by others vs its pubkey
 
 **Scalar derivation**
-We'll need a function to generate a scalar from arbitrary arguments. Basically it's implemented via a hash function (such as SHA-256). However additional steps are required to make sure the result is a valid EC scalar (clamping).
+We'll need a collision-resistant function to generate a scalar from arbitrary arguments. Basically it's implemented via a hash function (such as SHA-256). However additional steps are required to make sure the result is a valid EC scalar (clamping).
 We'll call this function $Hash_s(msg)$
 
 **Moniker -> scalar function**
-While actors use monikers for identification, the SSS operates on arguments in terms of EC scalars. Each actor will be assigned a scalar $x_i = Hash_s(moniker_i)$. There should be no duplicates. In a highly unlikely case of collision, the actor will have to choose another moniker.
+While actors use monikers for identification, the SSS operates on arguments in terms of EC scalars. Each actor will be assigned a scalar $x_i = Hash_s("actor-" | moniker_i)$. There should be no duplicates. In a highly unlikely case of collision, the actor will have to choose another moniker.
 
 **Mutual antisymmetric secret**
 
@@ -75,20 +71,30 @@ $$
 Or, in terms of pubkeys:
 
 $$
-P(x) = \sum_{i=1}^{M} P_i \cdot \prod_{j \neq i} \frac{x - x_j}{x_i - x_j}
+P(x) = \sum_{i=1}^{M} P_i \cdot \prod_{j \neq i} \frac{x - x_j}{x_i - x_j} = \sum_{n=0}^{M-1}S_n \cdot x^n
 $$
 
-The secret co-factor is defined as: $sk_{cf} = sk(0)$
+Upon ritual completion, the public polynome coefficients $S_n$ become known to all the actors. The set { $\{ S_n \}$ } defines the wallet account.
 
-The co-factor image is defined as this: $P_{cf} = P(0)$
+Finally each actor initalizes its multisig wallet. The coefficients { $\{ S_n \}$ } are saved, in addition to its secret key and the moniker.
 
-**Note**: The $P_{cf}$ is computed by every actor individually, and is known among actors. In contrast the $sk_{cf}$ is never computed in a plain form.
-
-(3) Finally each actors initalizes its multisig wallet. The master secret used in BIP44/HKDF is initialized from $(P_{cf} | M)$. Each actor can individually calculate any pubkey:
+(3) Coin blinding factor is defined according to this formula:
 
 $$
-Pubkey(path) = BIP44(path) \cdot P_{cf}
+x_{coin}(number, value) = Hash_s("coin-" | number | value)
 $$
+
+and then:
+
+$$
+sk_{coin}(number, value) = sk(x_{coin}) + HKDF(S_0, x_{coin})
+$$
+
+whereas $number$ specifies the coin ID (number or any unique parameters), and ${S_0}$ is used as a seed to derive a complemental key via HKDF. While this term is known among actors, it's important to keep it, since it can increase the overall security (more about this later).
+
+Note that the coin blinding factor can't be calculated by individual actors (since the function $sk_(x)$ is unknown). Actors can only calculate their shares to the coin blinding factor.
+But the public key, and the coin commitment can be calculated be each actor individually.
+
 
 ### Adding an actor
 
@@ -99,10 +105,10 @@ A quorum of M current actors can add an additional actor. For this the following
 (2) Each actor computes ands sends **privately** the following key share:
 
 $$
-sk_{share_i} = sk_{i} \cdot \prod_{j \neq i} \frac{x_{new} - x_j}{x_i - x_j} + \sum_{j \neq i} \delta(i,j, context_{msg})
+sk_{share_i} = sk_{i} \cdot \prod_{j \neq i} \frac{x_{new} - x_j}{x_i - x_j} + \sum_{j \neq i} \delta(i,j, context)
 $$
 
-whereas $context_{msg}$ includes all the parameters of the ritual: $P_{cf}$, $x_{new}$, and the selected quorum of M existing actors. This is to make sure $\delta(i,j, context_{msg})$ is unique in each ritual
+whereas $context$ includes all the parameters of the ritual: $S_0$, $x_{new}$, and the selected quorum of M existing actors. This is to make sure $\delta(i,j, context)$ is unique in each ritual
 
 The new actor then performs the summation of all the shares:
 
@@ -128,10 +134,12 @@ MW transaction consists of inputs, outputs at least one kernel. In order to buil
 
 Each actor receives and realizes the tx parameters. In particular, the tx balance (outputs minus inputs) is calculated. And then it decides if it wishes to take a part. Then the selected actors perform an MPC to build the transaction.
 
-Inputs are represented by Pedersen commitments (or, alternatively, Switch commitments). Since they are EC points, the knowledge of $sk_{cf}$ is not necessary, they can be calculated by each actor from $P_{cf}$ alone.
+### Inputs
+
+Inputs are represented by Pedersen commitments (or, alternatively, Switch commitments). Since they are EC points, they can be calculated by each actor:
 
 $$
-C(number, value) = BIP44(CoinPath(number, value)) \cdot P_{cf} + H \cdot value
+C(number, value) = P(x_{coin}(number, value)) + H \cdot value
 $$
 
 Now we'll define how output TXOs and the transaction kernel are created and signed
@@ -162,7 +170,7 @@ The $Tau_X$ is a linear combination of the UTXO blinding factor, and 2 nonces, w
 - Each actor proceeds according to the scheme, up to where T1,T2 should be revealed.
 - Each actor generates 2 nonces, using true random (i.e. non-deterministic), uses them to calculate its share of T1,T2, and reveals its shares.
 - Once M actors reveal their shares, they're aggregated to compute the final T1,T2.
-- Each validator derives the next nonce, and uses it to compute and reveal its share of $Tau_X$
+- Each actor derives the next nonce, and uses it to compute and reveal its share of $Tau_X$
 - Once M actors reveal their shares, they're aggregated to compute the  $Tau_X$
   - Note: it's possible to verify the correctness of each partial contribution to $Tau_X$
 - All the consequent steps are performed individually by each actor (no more MPC is required)
