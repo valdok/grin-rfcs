@@ -163,8 +163,66 @@ The $Tau_X$ is a linear combination of the UTXO blinding factor, and 2 nonces, w
 - Once M actors reveal their shares, they're aggregated to compute the final T1,T2.
 - Each validator derives the next nonce, and uses it to compute and reveal its share of $Tau_X$
 - Once M actors reveal their shares, they're aggregated to compute the  $Tau_X$
+  - Note: it's possible to verify the correctness of each partial contribution to $Tau_X$
 - All the consequent steps are performed individually by each actor (no more MPC is required)
 
 
 #### Transaction Kernel
+
+In order to create and sign the transaction kernel, the MPC is required as well. Even in normal transactions, where both the sender and the receiver are standard wallets, the MPC is used to create and sign the transaction kernel.
+
+Here we'll generalize this to the case where either side of the transaction (either the sender or the receiver or both) is a multisig wallet.
+
+The difference of the inputs-outputs blinding factors contributes to the transaction excess, and should be compensated by the transaction kernel. Each actor calculates its share of this excess,
+this is its share of the secret key that's used to sign the kernel.
+
+An important addition to the classical MW is the so-called transaction **offset**. The total transaction blinding factor excess is split into 2 parts. One is compensated by the transaction kernel, and the other part is revealed in a plain form (EC scalar). This makes it infeasible for the attacker to reverse engineer the coinjoined transactions. To support this, each actor splits its key share into 2 parts as well. 
+
+Then the principle is similar to that of UTXO. During the first round each actor creates a non-deterministic nonce, reveals its image, the image of its share to the kernel excess, and the offset. Then, once all the nonces and kernel commitment shares are known and aggregated (from both sides of the transaction), the kernel is fully built. During the second round, each actor derives the signature challenge, and reveals its share of the blinded secret key.
+
+#### E2E flow
+
+Here we'll consider an example where Alice sends funds to Bob, both are in fact multisig wallets
+
+- Alice side
+  - A quorum of $M_A$ actors that co-own the Alice wallet decides to send funds to Bob. A list of input coins is selected, fee is decided, the coin number for the exchange coin is choosen.
+  - The information is distributed among the actors.
+  - They generate appropriate nonces (2 for output UTXO, one for tx kernel)
+  - Round 1: they reveal the images: T1,T2 for the UTXO, kernel Commitment and the noce image.
+  - The semi-build kernel is sent to the Bob, among with the general transaction info
+- Bob side
+  - A quorum of $M_B$ Bob's actors decides to accept the funds. They choose the coin number for the output UTXO
+  - Each actor generates the appropriate nonces (2 for output UTXO, and 1 for kernel).
+  - Round 1: they reveal the images: T1,T2 for the UTXO, kernel Commitment and the noce image.
+  - Round 2: each actor receives the aggregates for the UTXO and the kernel. And reveals its partial signatures, and its share to the offset
+  - The aggregated kernel with the signed Bob's UTXO is sent to Alice
+- Alice side
+  - Round 2: each actor receives the aggregates for the UTXO and the kernel. And reveals its partial signatures, and its share to the offset
+- The transaction is aggregated, and can be sent to the network
+
+As can be seen from the above, the roles of Bob and Alice actors are symmetric. Both participate in 2 rounds of MPC.
+
+## Security considerations
+
+### Adding the new actor, and the role of $\delta(i,j)$
+
+During the new actor addition, each current actor reveals its secret key in a plain form to the new actor. It's multiplied by the SSS coefficient, but this coefficient is widely known. So without the addition of $\delta(i,j)$ terms each actor secret key would be trivial to compute.
+
+This is why $\delta(i,j)$ terms are essential, they perform the perfect blinding of the actor secret key. Moreover, even if several current actors collude with the new actor, still its key is perfectly blinded as long as there is at least a single honest actor that doesn't disclose its $\delta(i,j)$ term.
+
+The only situation where the actor key can be compromised is wherer all M-1 other actors collude with the new one. But this essentially means that they togetther form a quorum of M malicious actors. And obviously a quorum of M actors can calculate and compromise any key.
+
+### UTXO and kernel signing, why rely on non-deterministic random
+
+It's generally considered better to rely on deterministic nonce generation scheme, such as RFC-6979. However such schemes can't be used as-is in multisig rituals. There're advanced schemes, such as those used in MuSig-DN, that rely on ZKP to verify that each actor generated its nonce deterministically.
+
+For the sake of simplicity, we'll stick to random (non-deterministic) nonces. In the future it'll be possible to upgrade the protocol, and use the PRF (pseudo-random function) together with Bulletproof ZKP to generate and verify the correctness of the nonces.
+In either case, the general flow remains the same.
+And as long as the main principle holds: each nonce is used to only answer one challenge - the secret keys are safe.
+
+### Rogue key attack
+The only situation where such an attack is possible is during the wallet initialization by the quorum of M inital actors. If not mitigated, an actor can essentially cancel the keys of other actors, and gain an exclusive access.
+As we mentioned, this is mitigated by the fact that all messages sent by the actors are supposed to be signed by them.
+
+### Wagner attack
 
