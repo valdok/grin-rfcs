@@ -64,11 +64,15 @@ In this process, N users initialize the wallet
 (1) N initial actors decide to initialize/restore the wallet. They agree on M: the minimal quorum needed to build future transactions.
 
 Each actor creates M pseudo-random initial coefficients (perhaps derived from its seed phrase). This information is broadcasted:
+- Its address: $addr_i$
 - M Commitments to the coefficients: $C_{i,m} = G \cdot\ r_{i,m}$
-- Commitment to its address: $Hash(addr_i)$
 - PoP (proof of possession) to the above commitments. Schnorr's signatures of its address commitment, signed by its secret coefficients $r_{i,m}$
 
-(2) Each actor receives and verifies this information. The SSS polynomial is defined as the sum of the partial polynomials provided by N actors:
+(2) Each actor receives and verifies this information:
+- All addresses must be distinct
+- All Commitments must be valid (valid EC points), and appropriate PoP are valid as well
+
+The SSS polynomial is defined as the sum of the partial polynomials provided by N actors:
 
 $$
 sk(x) = \sum_{m=0}^M x^m \cdot \sum_{i=1}^N r_{i,m} = \sum_{m=0}^M x^m \cdot s_m
@@ -82,16 +86,11 @@ $$
 
 Note that the coefficients { $S_m$ } and the polynomial $P(x)$ are known, whereas { $s_m$ } are secret, and never computed in a plain form.
 
-Each validator broadcasts this:
-- $addr_i$ - its address
-
-(3) Each actor receives and verifies this information.
-- each other actor's address matches its previously-revealed commitment.
-- There're no duplicates
-
 At this point the x-coordinate for each validator is computed:
 
 $$x_i = Hash_s("actor-" | addr_i)$$
+
+All the { $x_i$ } must be distinct. Since the addresses of the actors are distinct, we assume the probability of collision of $x_i$ can be neglected.
 
 Each actor computes ands sends **privately** the following partial shares to other validators:
 
@@ -101,7 +100,7 @@ $$
 
 whereas $context$ stands for all the parameters that uniquely define this ceremony
 
-(4) Each actor that receives its designated partial shares finally calculates its share:
+(3) Each actor that receives its designated partial shares finally calculates its share:
 
 $$
 sk_j = \sum_{i=1}^N sk_{i,j} = \sum_{i=1}^N \sum_{m=0}^M r_{i,m} \cdot x_j^m = sk(x_j)
@@ -130,7 +129,7 @@ Once the ceremony is complete, each actor saves this information:
 
 
 
-(5) Coin blinding factor is defined according to this formula:
+(4) Coin blinding factor is defined according to this formula:
 
 $$
 x_{coin}(number, value) = Hash_s("coin-" | number | value)
@@ -280,6 +279,24 @@ The only situation where the actor key can be compromised is where all M-1 other
 
 **Note:** The same applies to the wallet initialization too. Although the partial shares are calculated differently, still each share is a linear combination of their secret coefficients { $r_{i,m}$ }, hence it should be masked by $\delta(i,j)$ terms.
 
+### Why this initialization procedure
+
+In a previous variant of the proposal, during the initialization M initial actors contributed each a single point to the polynomial. And then, a polynomial of degree M-1 was fully defined by M distinct points. The remaining N-M validators got their shares evaluated later, by the "Add new actor" ceremony.
+
+In the current version, the scheme was changed, it's now equvalent to the standard Feldman DKG scheme. Its advantages are:
+- All N actors take part in the initialization, and contribute to the randomness
+- It's well-studied, and considered secure
+
+The drawback of this scheme, perhaps minor but should be mentioned, is that actors cannot restore their shares solely from their seed phrase. In the previous share M initial actors computed their shares in advance, solely from their seed phrases. In the current scheme this is not possible, because the polynomial structure and its value at any point is affected by all N actors.
+
+### Address grinding
+
+By grinding we assume that an actor can try different variants of its address "for free", until it gets a desired $x_i$. It's not fesible to reach a collision, whereas its $x_i$ will coincide with other actor's $x_j$, or with $x_coin(number, value)$, the argument of a coin blinding factor. However, it's believed that attacker _may_ obtain a desired $x$ to influence the algebraic structure of the Lagrance coefficients ( $\frac{x - x_i}{x_j - x_i}$ ). By such it won't be able to obtain the secret keys, but it can try to cause some correlation between different derived keys (which otherwise should be looking perfectly random).
+
+While there's no direct attacks, and it's more like a paranoid threat, still such things should be avoided nevertheless. If actor addresses are known in advance, then there's no problem. The problem may manifest if the last actor has the ability to observe all other addresses and then grind its own address. This situation should be avoided.
+
+If the latter is the case, then the initialization, and adding new actor schemes should be extended to an additional pre-step. First and foremost, all actors must send a commitment of their address. Only then, after all the commitments are exchanged, all the actors reveal their addresses.
+
 ### UTXO and kernel signing, why rely on non-deterministic random
 
 It's generally considered better to rely on deterministic nonce generation scheme, such as RFC-6979. However such schemes can't be used as-is in multisig rituals. There're advanced schemes, such as those used in MuSig-DN, that rely on ZKP to verify that each actor generated its nonce deterministically.
@@ -330,9 +347,16 @@ $$\forall\, n \in \{0, \dots, M-1\}$$
 
 (This is like trying to solve M-1 generalized birthday problems simultaneously).
 
-It's a known problem, called Prouhet-Tarry-Escott (PTE) problem. And it's considered generally infeasible to solve, especially for large M
+It's a known problem, called Prouhet-Tarry-Escott (PTE) problem. And it's considered generally infeasible to solve, especially for large 
 
-However, since real-world M doesn't have to be large, additional steps can be taken by the actors to prevent the possibility of such attacks (though not sure if they're really needed). Those include the following:
+So, the first mitigation would be: M must be high enough (TBD). If the signature threshold (M/N) needs to be low, then the initialization scheme can be generalized in this way:
+- Use higher polynomial degree
+- Generate more shares
+- Give each actor more shares
+
+In simple words: make each actor behave as several ones, by such artificially raise the number of shares and the degree of the polynomial.
+
+Additional steps can be taken by the actors to prevent the possibility of such attacks (though not sure if they're really needed). Those include the following:
 - Ensure the being-spent coins actually exist and unspent (i.e. don't build transaction for non-existing inputs)
 - Stick to consequent coin number allocation. Each new coin number should not be completely random.
 - Don't create excessive number of outputs in a transaction. Normal transaction creates only a single output (per each side).
