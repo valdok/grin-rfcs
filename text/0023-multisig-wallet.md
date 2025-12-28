@@ -24,61 +24,113 @@ Multisig wallet will instead rely on SSS to generate the keys. The BIP44 can sti
 ### Key concepts
 
 Here we'll define key terms and concept
+ - We'll operate on secp256k1 curve (the native for Grin).
  - **Secret key** - EC (elliptic curve) scalar
  - **Pubkey** - EC point (group element).
- - We'll use the additive notation for the ECC operations (i.e. adding points, and multiplying points by scalars)
  - **Actor** - a user that co-owns a wallet.
- - **Moniker** - a unique user name/alias, that the actor chooses for identification (such as `Alice`, `Bob`, and etc.)
-
- **Message authentication**
+ - **Address** - the Grin SlatepackAddress. Each actor will have the address for both identification, and communication (encryption of messages).
+   - Not that Grin Slatepack addresses are defined over a different EC: ed25519.
  
- The protocol doesn't always require a secret P2P communication between individual actors, most messages are shared between all the actors and considered non-secret. However some messages must be protected against tampering. Hence we assume that each message broadcasted by an actor
- is signed by its private key, and then verified by others vs its pubkey
+ **Communication**
+ The protocol requires a communication between the actors. Some messages must be sent secretly P2P, whereas the rest are "broadcasted", i.e. sent to all the actors. In either case, we assume there's the underlying mechanism for this. In particular we require the following:
+ - All the messages are protected against tampering
+ - Impersonation is not feasible, each message's sender can be verified
+ - P2P message contents are secret, i.e. only the recipient should be able to read it in plaintext. The messaging metadata (the even fact of communication, message size, etc.) is not secret.
 
 **Scalar derivation**
 We'll need a collision-resistant function to generate a scalar from arbitrary public arguments. Basically it's implemented via a hash function (such as SHA-256). However additional steps are required to make sure the result is a valid EC scalar (clamping).
 We'll call this function $Hash_s(msg)$
 
-**Moniker -> scalar function**
-While actors use monikers for identification, the SSS operates on arguments in terms of EC scalars. Each actor will be assigned a scalar $x_i = Hash_s("actor-" | moniker_i)$. There should be no duplicates. In a highly unlikely case of collision, the actor will have to choose another moniker.
-
 **Mutual antisymmetric secret**
 
 For each pair of actors $i \neq j$ we'll define this function:
 
-$\delta(i,j,context) = Hash_s( DH(i,j) | context) \cdot (x_i - x_j)$
-
-whereas $DH(i,j)$ stands for Diffie-Hellman shared secret, $context$ is arbitrary message, and $x_i$ is derived from the actor's moniker.
-Not that this function is antisymmetric: $\delta(i,j) + \delta(j,i) = 0$
-
-
-### Wallet initialization/recovery
-
-In this process, M initial users initialize/restore the wallet
-
-(1) Each actor generates (or restores) its master key $sk_i$ (perhaps derived from its private seed phrase), and then broadcasts a message with those fields:
-- Pubkey: $P_i = G \cdot sk_i$
-- Moniker
-
-This message **must** be signed by the actor pubkey. Not only to protect against tampering, but also to prevent a rogue-key attack.
-
-(2) After actors exhange this information, everyone verifies there're indeed M different actors, and there're no duplicates. Then the following SSS polynomial is defined:
-
 $$
-sk(x) = \sum_{i=1}^{M} sk_i \cdot \prod_{i \neq j} \frac{x - x_j}{x_i - x_j}
+\delta(i,j,context) = Hash_s( DH(i,j) | context) \cdot (x_i - x_j)
 $$
 
-Or, in terms of pubkeys:
+whereas:
+- $DH(i,j)$ stands for Diffie-Hellman shared secret (in terms of their SlatepackAddress)
+- $context$ is arbitrary message
+- $x_i$ is derived from the actor's address (more about this later)
+
+Note that this function is antisymmetric: $\delta(i,j) + \delta(j,i) = 0$
+
+
+### Wallet initialization
+
+In this process, N users initialize the wallet
+
+(1) N initial actors decide to initialize/restore the wallet. They agree on M: the minimal quorum needed to build future transactions.
+
+Each actor creates M pseudo-random initial coefficients (perhaps derived from its seed phrase). This information is broadcasted:
+- M Commitments to the coefficients: $C_{i,m} = G \cdot\ r_{i,m}$
+- Commitment to its address: $Hash(addr_i)$
+- PoP (proof of possession) to the above commitments. Schnorr's signatures of its address commitment, signed by its secret coefficients $r_{i,m}$
+
+(2) Each actor receives and verifies this information. The SSS polynomial is defined as the sum of the partial polynomials provided by N actors:
 
 $$
-P(x) = \sum_{i=1}^{M} P_i \cdot \prod_{j \neq i} \frac{x - x_j}{x_i - x_j} = \sum_{n=0}^{M-1}S_n \cdot x^n
+sk(x) = \sum_{m=0}^M x^m \cdot \sum_{i=1}^N r_{i,m} = \sum_{m=0}^M x^m \cdot s_m
 $$
 
-Upon ritual completion, the public polynome coefficients { $S_n$ } become known to all the actors.
+or in terms of pubkeys:
 
-Finally each actor initalizes its multisig wallet. The coefficients { $\{ S_n \}$ } are saved, in addition to its secret key and the moniker.
+$$
+P(x) = \sum_{m=0}^M x^m \cdot \sum_{i=1}^N C_{i,m} = \sum_{m=0}^M x^m \cdot S_m
+$$
 
-(3) Coin blinding factor is defined according to this formula:
+Note that the coefficients { $S_m$ } and the polynomial $P(x)$ are known, whereas { $s_m$ } are secret, and never computed in a plain form.
+
+Each validator broadcasts this:
+- $addr_i$ - its address
+
+(3) Each actor receives and verifies this information.
+- each other actor's address matches its previously-revealed commitment.
+- There're no duplicates
+
+At this point the x-coordinate for each validator is computed:
+
+$$x_i = Hash_s("actor-" | addr_i)$$
+
+Each actor computes ands sends **privately** the following partial shares to other validators:
+
+$$
+sk_{i,j} = \sum_{m=0}^M r_{i,m} \cdot x_j^m + \sum_{k \neq i} \delta(i,k, context | j)
+$$
+
+whereas $context$ stands for all the parameters that uniquely define this ceremony
+
+(4) Each actor that receives its designated partial shares finally calculates its share:
+
+$$
+sk_j = \sum_{i=1}^N sk_{i,j} = \sum_{i=1}^N \sum_{m=0}^M r_{i,m} \cdot x_j^m = sk(x_j)
+$$
+
+(we used the fact that all the $\delta(i,k, context | j)$ terms cancel-out)
+
+Each actor verifies that its share is correct:
+
+$$
+G \cdot sk_j = P(x_j)
+$$
+
+Finally the secret polynomial is redefined in terms of the secret shares. For each argument $x$ the polynomial is evaluated by a quorum Q of M actors as:
+
+$$
+sk(x) = \sum_{j \in Q} sk_j \cdot \prod_{i \in Q, i \neq j} \frac{x - x_i}{x_j - x_i} = \sum_j sk_{j,Q}(x)
+$$
+
+The terms $sk_{j,Q}(x)$ will be called **partial keys**.
+
+Once the ceremony is complete, each actor saves this information:
+- Public polynomial coefficients: { $S_m$ }
+- Its address: $addr_j$
+- Its share: $sk_j$
+
+
+
+(5) Coin blinding factor is defined according to this formula:
 
 $$
 x_{coin}(number, value) = Hash_s("coin-" | number | value)
@@ -98,17 +150,17 @@ But the public key, and the coin commitment can be calculated be each actor indi
 
 ### Adding an actor
 
-A quorum of M current actors can add an additional actor. For this the following steps are performed.
+A quorum Q of M current actors can add an additional actor. For this the following steps are performed.
 
-(1) New actor picks and shares a unique moniker. Unlike initial actors, that can generate/restore an arbitrary secret key, new actor's key is uniquely defined by its moniker.
+(1) New actor picks and shares its unique address. The address must be unique (no duplicates with existing actors)
 
-(2) Each actor computes ands sends **privately** the following key share:
+(2) Each actor computes and sends **privately** the following key share:
 
 $$
-sk_{share_i} = sk_{i} \cdot \prod_{j \neq i} \frac{x_{new} - x_j}{x_i - x_j} + \sum_{j \neq i} \delta(i,j, context)
+sk_{share_i} = sk_{i,Q}(x_{new}) + \sum_{j \in Q, j \neq i} \delta(i,j, context)
 $$
 
-whereas $context$ includes all the parameters of the ritual: $S_0$, $x_{new}$, and the selected quorum of M existing actors. This is to make sure $\delta(i,j, context)$ is unique in each ritual
+whereas $context$ includes all the parameters of the ceremony: $S_0$, $x_{new}$, and the selected quorum Q. This is to make sure $\delta(i,j, context)$ is unique in each ceremony
 
 The new actor then performs the summation of all the shares:
 
@@ -118,16 +170,22 @@ $$
 
 Note that during this summation, all the $\delta(i,j)$ terms are cancelled-out. They are needed to blind each actor's secret key, but don't affect the sum of all the shares.
 
-Finally the new actor verifies the correctness of its secret key, by checking if its appropriate pubkey sits on the same SSS polynome.
+Finally the new actor verifies the correctness of its secret key, by checking if its appropriate pubkey sits on the same SSS polynomial.
 
 $$
-G \cdot sk_{new} = P_{x_{new}} = P(x_{new})
+G \cdot sk_{new} = P(x_{new})
 $$
+
+### Wallet restoration
+
+If some actors lost access to their data, whereas at least M other actors retain their wallets - they can re-evaluate the shares of those actors by the procedure described above: "Adding an actor".
+Otherwise, if there're fewer validators remaining, the wallet initialization procedure can be repeated from scratch. Since the whole procedure is deterministic, then the same set of N actors will yield the same secret polynomial and the same shares will be computed.
+Otherwise, if there're less than M valid actors remain, and it's not possible to get the initial N actors to repeat the initialization ceremony - it won't be possible to restore the wallet.
 
 
 ### Building a transaction
 
-MW transaction consists of inputs, outputs at least one kernel. In order to build a valid transaction, a subset of M/N actors are selected. Each actor gets the transaction parameters:
+MW transaction consists of inputs, outputs at least one kernel. In order to build a valid transaction, a quorum of M actors is selected. Each actor gets the transaction parameters:
 - list of input coins (coin number + value)
 - list of output coins (coin number + value)
 - any additional metadata (current blockchain height, fee, the identity of the tx peer, memo, etc.)
@@ -220,6 +278,8 @@ This is why $\delta(i,j)$ terms are essential, they perform the perfect hiding o
 
 The only situation where the actor key can be compromised is where all M-1 other actors collude with the new one. But this essentially means that they together form a quorum of M malicious actors. And obviously a quorum of M actors can calculate and compromise any key.
 
+**Note:** The same applies to the wallet initialization too. Although the partial shares are calculated differently, still each share is a linear combination of their secret coefficients { $r_{i,m}$ }, hence it should be masked by $\delta(i,j)$ terms.
+
 ### UTXO and kernel signing, why rely on non-deterministic random
 
 It's generally considered better to rely on deterministic nonce generation scheme, such as RFC-6979. However such schemes can't be used as-is in multisig rituals. There're advanced schemes, such as those used in MuSig-DN, that rely on ZKP to verify that each actor generated its nonce deterministically.
@@ -229,8 +289,8 @@ In either case, the general flow remains the same.
 And as long as the main principle holds: each nonce is used to only answer one challenge - the secret keys are safe.
 
 ### Rogue key attack
-The only situation where such an attack is possible is during the wallet initialization by the quorum of M inital actors. If not mitigated, an actor can essentially cancel the keys of other actors, and gain an exclusive access.
-As we mentioned, this is mitigated by the fact that all messages sent by the actors are supposed to be signed by them.
+The only situation where such an attack is possible is during the wallet initialization, where each actor reveals broadcasts the commitments to its coefficients $C_{i,m} = G \cdot\ r_{i,m}$. If not mitigated, an actor can essentially cancel the keys of other actors, and gain an exclusive access.
+As we mentioned, this is mitigated by mandatory inclusion of PoP (proof-of-possession) for each commitment.
 
 ### Why the coin value should be used together with the coin number in its key derivation
 
@@ -257,7 +317,7 @@ $$
 
 Note that if the attacker could derive blinding factors for arbitrary coin parameters, then it'd be a feasible task for a large enough set. This is known as the Generalized Birthday problem, or Wagner attack.
 
-However, in our particular case, coin blinding factors are derived from the SSS polynome, whose coefficients are secret.
+However, in our particular case, coin blinding factors are derived from the SSS polynomial, whose coefficients are secret.
 
 So, the only way for the attacker to find such sets is to try to find the sets where different powers of $x^n$ are equal for different sets. That is:
 
