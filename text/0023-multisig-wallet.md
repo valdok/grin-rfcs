@@ -9,7 +9,7 @@
 Support an M/N multisig wallet.
 
 ## Motivation
-The idea is to allow a wallet to be co-owned by several users, whereas a quorum of N/M is both required and sufficient to build a valid transaction (i.e. send or receive funds).
+The idea is to allow a wallet to be co-owned by several users, whereas a quorum of M/N is both required and sufficient to build a valid transaction (i.e. send or receive funds).
 
 
 ## Reference-level explanation
@@ -29,7 +29,7 @@ Here we'll define key terms and concept
  - **Pubkey** - EC point (group element).
  - **Actor** - a user that co-owns a wallet.
  - **Address** - the Grin SlatepackAddress. Each actor will have the address for both identification, and communication (encryption of messages).
-   - Not that Grin Slatepack addresses are defined over a different EC: ed25519.
+   - Note that Grin Slatepack addresses are defined over a different EC: ed25519.
  
  **Communication**
  The protocol requires a communication between the actors. Some messages must be sent secretly P2P, whereas the rest are "broadcasted", i.e. sent to all the actors. In either case, we assume there's the underlying mechanism for this. In particular we require the following:
@@ -143,7 +143,7 @@ $$
 
 whereas $number$ specifies the coin ID (number or any unique parameters), and ${S_0}$ is used as a seed to derive a complemental key via HKDF. While this term is known among actors, it's important to keep it, since it can increase the overall security (more about this later).
 
-Note that the coin blinding factor can't be calculated by individual actors (since the function $sk_(x)$ is unknown). Actors can only calculate their shares to the coin blinding factor.
+Note that the coin blinding factor can't be calculated by individual actors (since the function $sk(x)$ is unknown). Actors can only calculate their shares to the coin blinding factor.
 But the public key, and the coin commitment can be calculated be each actor individually.
 
 
@@ -258,7 +258,7 @@ Here we'll consider an example where Alice sends funds to Bob, both are in fact 
 - Bob side
   - A quorum of $M_B$ Bob's actors decides to accept the funds. They choose the coin number for the output UTXO
   - Each actor generates the appropriate nonces (2 for output UTXO, and 1 for kernel).
-  - Round 1: they reveal the images: T1,T2 for the UTXO, and the kernel noce image.
+  - Round 1: they reveal the images: T1,T2 for the UTXO, and the kernel nonce image.
   - Round 2: each actor receives the aggregates for the UTXO and the kernel. And reveals its partial signatures
   - The aggregated kernel, offset and Bob's UTXO is sent to Alice
 - Alice side
@@ -291,7 +291,7 @@ The drawback of this scheme, perhaps minor but should be mentioned, is that acto
 
 ### Address grinding
 
-By grinding we assume that an actor can try different variants of its address "for free", until it gets a desired $x_i$. It's not fesible to reach a collision, whereas its $x_i$ will coincide with other actor's $x_j$, or with $x_coin(number, value)$, the argument of a coin blinding factor. However, it's believed that attacker _may_ obtain a desired $x$ to influence the algebraic structure of the Lagrance coefficients ( $\frac{x - x_i}{x_j - x_i}$ ). By such it won't be able to obtain the secret keys, but it can try to cause some correlation between different derived keys (which otherwise should be looking perfectly random).
+By grinding we assume that an actor can try different variants of its address "for free", until it gets a desired $x_i$. It's not fesible to reach a collision, whereas its $x_i$ will coincide with other actor's $x_j$, or with $x_{coin}(number, value)$, the argument of a coin blinding factor. However, it's believed that attacker _may_ obtain a desired $x$ to influence the algebraic structure of the Lagrance coefficients ( $\frac{x - x_i}{x_j - x_i}$ ). By such it won't be able to obtain the secret keys, but it can try to cause some correlation between different derived keys (which otherwise should be looking perfectly random).
 
 While there's no direct attacks, and it's more like a paranoid threat, still such things should be avoided nevertheless. If actor addresses are known in advance, then there's no problem. The problem may manifest if the last actor has the ability to observe all other addresses and then grind its own address. This situation should be avoided.
 
@@ -315,14 +315,14 @@ After the agreed transaction is built and signed by the actors, a malicious acto
 
 Suppose a multisig wallet owns two coins, with values $V1 < V2$. There's a decision to spend the coin with value $V1$ in a transaction. It's collectively built and signed, but then a malicious actor changes the input to $V2$, and appends its UTXO that absorbs the value $V2-V1$.
 
-Actions such as replacing coins are generally not possible, because different coins have different blinding factors, and it's not feasible to build a valid transaction when the blinding factor balance isn't compensated. But what if rgw attacker can manipulate inputs and outputs such that the **resulting blinding factor balance is unchanged**?
+Actions such as replacing coins are generally not possible, because different coins have different blinding factors, and it's not feasible to build a valid transaction when the blinding factor balance isn't compensated. But what if the attacker can manipulate inputs and outputs such that the **resulting blinding factor balance is unchanged**?
 
 
 Coins with different numbers (i.e. IDs) will have different blinding factors. But what if a wallet owns several coins with different values but the same number?
 Normally actors should not take part in UTXO creation with coin number that was already used. But the situation may be confusing because of the blockchain state volatility. There can be potential reorgs, whereas transactions may be reverted, and then, after some time, included again in a block.
 By such it's theoretically possible the wallet will own several coins with the same ID, but different values. If the same blinding factor is used in all of them, then it's trivial to replace them in an already-built transaction.
 
-**Mitigation:** include the coin value in the blidning factor derivation too.
+**Mitigation:** include the coin value in the blinding factor derivation too.
 
 ### Wagner attack, Prouhet-Tarry-Escott (PTE) problem
 
@@ -347,7 +347,7 @@ $$\forall\, n \in \{0, \dots, M-1\}$$
 
 (This is like trying to solve M-1 generalized birthday problems simultaneously).
 
-It's a known problem, called Prouhet-Tarry-Escott (PTE) problem. And it's considered generally infeasible to solve, especially for large 
+It's a known problem, called Prouhet-Tarry-Escott (PTE) problem. And it's considered generally infeasible to solve, especially for large M.
 
 So, the first mitigation would be: M must be high enough (TBD). If the signature threshold (M/N) needs to be low, then the initialization scheme can be generalized in this way:
 - Use higher polynomial degree
