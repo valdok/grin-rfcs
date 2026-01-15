@@ -95,18 +95,14 @@ All the { $x_i$ } must be distinct. Since the addresses of the actors are distin
 Each actor computes ands sends **privately** the following partial shares to other validators:
 
 $$
-sk_{i,j} = \sum_{m=0}^M r_{i,m} \cdot x_j^m + \sum_{k \neq i} \delta(i,k, context | j)
+sk_{i,j} = \sum_{m=0}^M r_{i,m} \cdot x_j^m
 $$
-
-whereas $context$ stands for all the parameters that uniquely define this ceremony
 
 (3) Each actor that receives its designated partial shares finally calculates its share:
 
 $$
 sk_j = \sum_{i=1}^N sk_{i,j} = \sum_{i=1}^N \sum_{m=0}^M r_{i,m} \cdot x_j^m = sk(x_j)
 $$
-
-(we used the fact that all the $\delta(i,k, context | j)$ terms cancel-out)
 
 Each actor verifies that its share is correct:
 
@@ -276,8 +272,6 @@ During the new actor addition, each current actor reveals its secret key in a pl
 This is why $\delta(i,j)$ terms are essential, they perform the perfect hiding of the actor secret key. Moreover, even if several current actors collude with the new actor, still its key is perfectly hidden as long as there is at least a single honest actor that doesn't disclose its $\delta(i,j)$ term.
 
 The only situation where the actor key can be compromised is where all M-1 other actors collude with the new one. But this essentially means that they together form a quorum of M malicious actors. And obviously a quorum of M actors can calculate and compromise any key.
-
-**Note:** The same applies to the wallet initialization too. Although the partial shares are calculated differently, still each share is a linear combination of their secret coefficients { $r_{i,m}$ }, hence it should be masked by $\delta(i,j)$ terms.
 
 ### Why this initialization procedure
 
